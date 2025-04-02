@@ -2,7 +2,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from monlogger import logme
 from apscheduler.schedulers.background import BackgroundScheduler
 from middleware import log_requests
-from fastapi import FastAPI,HTTPException,Depends, UploadFile,BackgroundTasks,File,Form,Query
+from fastapi import FastAPI,HTTPException,Depends, UploadFile,BackgroundTasks,File,Form,Query,Body
 from pydantic import BaseModel, EmailStr,Field, field_validator,IPvAnyAddress
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1403,12 +1403,7 @@ async def get_demande_by_user(request : UserEmail  ,db: db_dependency):
 
 ###############################################################PLAYLIST APPROCHE#####################################################
 
-class Playlist(BaseModel):
-    pl_id: Optional[int] = None
-    pl_libelle : Optional[str]
-    pl_description : Optional[str]
-    pl_proprietaire : Optional[int]
-    pl_status : Optional[bool]
+
 
 class Mip(BaseModel):
     mip_media_id : int
@@ -1432,6 +1427,14 @@ class Sch(BaseModel):
     sch_hour_end : HeureMinute  #{"heure": 24, "minute": 60}
 
 
+class Playlist(BaseModel):
+    pl_id: int 
+    pl_libelle : Optional[str] = None
+    pl_description : Optional[str] = None
+    pl_proprietaire : Optional[int] = None
+    pl_status : Optional[bool]  = None
+
+
 #Methode pour creer une playlist
 @ipo.post("/playlist/add")
 async def add_playlist(newplaylist:Playlist,db:db_dependency):
@@ -1444,6 +1447,28 @@ async def add_playlist(newplaylist:Playlist,db:db_dependency):
     except:
         logme.error("add_playlist: Une erreur s'est produite lors de l'ajout de la playlist "+ newplaylist.pl_libelle)
         return {"etat": "error", "message": "Une erreur s'est produite lors de l'ajout de la playlist"}
+    
+
+
+    
+
+@ipo.delete("/playlist/delete")
+async def delete_playlist(delplaylist: Playlist, db: db_dependency):
+    try:
+        db.query(models.Grille).filter(models.Grille.playlist_id == delplaylist.pl_id).delete()
+        db.query(models.MIP).filter(models.MIP.mip_playlist_id == delplaylist.pl_id).delete()
+        db.query(models.PIP).filter(models.PIP.pip_playlist_id == delplaylist.pl_id).delete()
+        db.query(models.Playlist).filter(models.Playlist.id == delplaylist.pl_id).delete()
+        
+        db.commit()
+        logme.info(f"Playlist {delplaylist.pl_id} supprimée avec succès")
+        return {"etat": "success", "message": "Playlist supprimée"}
+
+    except Exception as e:
+        logme.error(f"Erreur suppression playlist {delplaylist.pl_id}: {str(e)}")
+        return {"etat": "error", "message": f"Erreur de suppression: {str(e)}"}
+
+
 
 #Methode pour lister les playlists 
 @ipo.get("/playlist/list")
