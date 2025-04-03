@@ -1407,9 +1407,7 @@ async def get_demande_by_user(request : UserEmail  ,db: db_dependency):
 
 
 
-class Pip(BaseModel):
-    pip_playlist_id : int
-    pip_pdv_id : int
+
 
 class HeureMinute(BaseModel):
     heure: int
@@ -1486,6 +1484,29 @@ async def pl_maj_media(newmip:Mip,db:db_dependency):
     except:
         logme.error("pl_add_media: Une erreur lors de l'ajout ou Suppression du media "+ str(media_id)+" dans playlist "+ str(newmip.mip_playlist_id))
         return {"etat": "error", "message": "Une erreur s'est produite lors de l'ajout ou suppression du media dans playlist"}
+
+
+
+class Pip(BaseModel):
+    list_pdv_id : list
+    del_pdv_id : list
+    pip_playlist_id : int
+    pip_add_by : str
+
+#Methode pour mettre à jour les pdv associés à d'une playlist (ajout ou/et suppression)
+@ipo.post("/playlist/majpdv")
+async def pl_maj_pdv(newpip:Pip,db:db_dependency):
+    try:
+        for pdv_id in newpip.list_pdv_id:
+            db.merge(models.PIP(pip_pdv_id = pdv_id,pip_playlist_id = newpip.pip_playlist_id,pip_add_by = newpip.pip_add_by))
+        for pdv_id in newpip.del_pdv_id:
+            db.query(models.PIP).filter(and_(models.PIP.pip_pdv_id == pdv_id,models.PIP.pip_playlist_id == newpip.pip_playlist_id)).delete()
+        db.commit()
+        logme.info("pl_maj_pdv: Ajout du  des pdv "+ str(newpip.list_pdv_id)+ " ou Suppression " +(str(newpip.del_pdv_id))+ " dans playlist "+ str(newpip.pip_playlist_id))
+        return {"etat": "success", "message": "Ajout ou suppression associations pdv dans la playlist"}
+    except:
+        logme.error("pl_maj_pdv: Une erreur lors de l'ajout ou Suppression du pdv"+ str(pdv_id)+" dans playlist "+ str(newpip.pip_playlist_id))
+        return {"etat": "error", "message": "Une erreur s'est produite lors de l'ajout ou suppression association pdv dans playlist"}
 
 #Methode pour lister les playlists 
 @ipo.get("/playlist/list")
