@@ -1405,9 +1405,7 @@ async def get_demande_by_user(request : UserEmail  ,db: db_dependency):
 
 
 
-class Mip(BaseModel):
-    mip_media_id : int
-    mip_playlist_id : int
+
 
 class Pip(BaseModel):
     pip_playlist_id : int
@@ -1468,7 +1466,26 @@ async def delete_playlist(delplaylist: Playlist, db: db_dependency):
         logme.error(f"Erreur suppression playlist {delplaylist.pl_id}: {str(e)}")
         return {"etat": "error", "message": f"Erreur de suppression: {str(e)}"}
 
+class Mip(BaseModel):
+    list_media_id : list
+    del_media_id : list
+    mip_playlist_id : int
+    mip_add_by : str
 
+#Methode pour mettre à jour les medias d'une playlist (ajout ou/et suppression)
+@ipo.post("/playlist/majmedia")
+async def pl_maj_media(newmip:Mip,db:db_dependency):
+    try:
+        for media_id in newmip.list_media_id:
+            db.merge(models.MIP(mip_media_id = media_id,mip_playlist_id = newmip.mip_playlist_id,mip_add_by = newmip.mip_add_by))
+        for media_id in newmip.del_media_id:
+            db.query(models.MIP).filter(and_(models.MIP.mip_media_id == media_id,models.MIP.mip_playlist_id == newmip.mip_playlist_id)).delete()
+        db.commit()
+        logme.info("pl_add_media: Ajout du  des media "+ str(newmip.list_media_id)+ " ou Suppression " +(str(newmip.del_media_id))+ " dans playlist "+ str(newmip.mip_playlist_id))
+        return {"etat": "success", "message": "Ajout ou suppression du media dans la playlist"}
+    except:
+        logme.error("pl_add_media: Une erreur lors de l'ajout ou Suppression du media "+ str(media_id)+" dans playlist "+ str(newmip.mip_playlist_id))
+        return {"etat": "error", "message": "Une erreur s'est produite lors de l'ajout ou suppression du media dans playlist"}
 
 #Methode pour lister les playlists 
 @ipo.get("/playlist/list")
