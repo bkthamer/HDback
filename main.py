@@ -1405,7 +1405,9 @@ async def get_demande_by_user(request : UserEmail  ,db: db_dependency):
 
 
 
-
+class Pip(BaseModel):
+    pip_playlist_id : date
+    pip_pdv_id : int
 
 
 
