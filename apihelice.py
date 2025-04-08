@@ -145,53 +145,77 @@ def pushconfig_sd(ip,hdref,setupname):
     return True
 
 def disable_file_sd(ip, fichier):
-
-    new_name = f"{fichier}.gz"  
     try:
         with FTP(ip) as ftp_helice:
             ftp_helice.cwd('sd_card')
             
-            bio = io.BytesIO()
-            ftp_helice.retrbinary(f"RETR {fichier}", bio.write)
-            data = bio.getvalue()
-            
-            compressed_data = gzip.compress(data)
-            
-            bio_compressed = io.BytesIO(compressed_data)
-            ftp_helice.storbinary(f"STOR {new_name}", bio_compressed)
-            
-            ftp_helice.delete(fichier)
-        return {"message": "Fichier désactivé et compressé"}
+            ftp_helice.rename(fichier, f'dis/{fichier}')
+        return {"message": "Fichier déplacé dans le dossier dis"}
     except Exception as e:
         return {"message": f"Erreur de désactivation: {str(e)}"}
 
 def enable_file_sd(ip, fichier):
-    
-    if not fichier.endswith(".gz"):
-        return {"message": "Le fichier n'est pas au format compressé attendu"}
-    
     try:
+        base_name = os.path.basename(fichier)
+        
         with FTP(ip) as ftp_helice:
-            ftp_helice.cwd('sd_card')
-            
            
-            bio = io.BytesIO()
-            ftp_helice.retrbinary(f"RETR {fichier}", bio.write)
-            compressed_data = bio.getvalue()
-            
-            
-            data = gzip.decompress(compressed_data)
-            
+            ftp_helice.cwd('/sd_card')
+
            
-            original_name = fichier[:-3]
-            
-            
-            bio_decompressed = io.BytesIO(data)
-            ftp_helice.storbinary(f"STOR {original_name}", bio_decompressed)
-            
-            
-            ftp_helice.delete(fichier)
-            reload_playlist_sd(ip)
-        return {"message": "Fichier réactivé et décompressé"}
+            if base_name.lower() == "dis":
+                try:
+                    ftp_helice.cwd("dis")
+                except Exception as e:
+                    return {"message": f"Dossier 'dis' introuvable: {str(e)}"}
+
+                try:
+                    file_list = ftp_helice.nlst()
+                except Exception as e:
+                    return {"message": f"Erreur lors de la lecture du dossier 'dis': {str(e)}"}
+                finally:
+                    
+                    ftp_helice.cwd("..")
+
+                moved_files = []
+                for fname in file_list:
+                    if fname.lower().endswith(".mp4"):
+                        source = f"dis/{fname}"
+                        destination = fname
+                        try:
+                           
+                            try:
+                                ftp_helice.size(destination)
+                              
+                                continue
+                            except Exception:
+                                pass
+                            ftp_helice.rename(source, destination)
+                            moved_files.append(fname)
+                        except Exception as e:
+                            print(f"Erreur pour {fname}: {str(e)}")
+                
+                reload_playlist_sd(ip)
+                return {"message": f"Fichiers restaurés: {', '.join(moved_files)}" if moved_files else "Aucun fichier à restaurer."}
+
+            else:
+
+                source = f"dis/{base_name}"
+                destination = base_name
+                try:
+                    ftp_helice.size(source)
+                except Exception:
+                    return {"message": f"Fichier {base_name} introuvable dans 'dis'."}
+
+                try:
+                    ftp_helice.size(destination)
+                    return {"message": f"Le fichier {base_name} existe déjà."}
+                except Exception:
+                    pass
+                
+                ftp_helice.rename(source, destination)
+                reload_playlist_sd(ip)
+                return {"message": f"Fichier {base_name} restauré."}
+
     except Exception as e:
-        return {"message": f"Erreur de réactivation: {str(e)}"}
+        return {"message": f"Erreur: {str(e)}"}

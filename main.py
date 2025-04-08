@@ -1581,6 +1581,88 @@ async def pl_list(db:db_dependency):
 async def pl_mip(db:db_dependency):
     return db.query(models.MIP).all()
 
+@ipo.get("/playlist/on/{playlist_id}")
+async def pl_on(tache_fond:BackgroundTasks,playlist_id:int,db:db_dependency):
+    # obtenir la liste des hélices et des medias de la playlist
+    try : list_media= get_list_media(playlist_id,db)
+    except: logme.error("pl_on: Une erreur la liste  des medias de la playlist "+ str(playlist_id))
+    try : list_cible= get_list_cible(playlist_id,db)
+    except: logme.error("pl_on: Une erreur la liste  des cibles de la playlist "+ str(playlist_id))
+    qui = "username"
+    for cible in list_cible:
+        ref= uuid.uuid4()
+        db_tache = models.TacheMaJHelice(id = ref,
+                            soumis_par = qui,
+                            list_media = list_media,
+                            helice_hdref = cible,
+                            last_info = func.now(),
+                            tentatives =0,
+                            status = "Demande"
+                          )
+        db.add(db_tache)
+        db.commit() 
+        tache_fond.add_task(activate_pl_to_helice,cible,list_media,ref,db)
+    
+    return {"list_media":list_media,"list_cible":list_cible}
+
+
+
+from models import PIP, Playlist, Pdv, Media 
+
+
+
+
+class PIPResponse(BaseModel):
+    playlist: dict
+    pdv: dict
+    medias: List[dict]
+    added_by: str
+    added_date: datetime
+
+
+
+
+@ipo.get("/pip", response_model=List[PIPResponse])
+def get_pip_details(db: Session = Depends(get_db)):
+    results = []
+    
+    
+    pip_entries = db.query(PIP).all()
+    
+    for pip in pip_entries:
+      
+        playlist = db.query(Playlist).filter(Playlist.id == pip.pip_playlist_id).first()
+        
+       
+        pdv = db.query(Pdv).filter(Pdv.id == pip.pip_pdv_id).first()
+        
+       
+        medias = db.query(Media).join(MIP).filter(MIP.mip_playlist_id == playlist.id).all()
+        
+        
+        results.append({
+            "playlist": {
+                "id": playlist.id,
+                "libelle": playlist.libelle,
+                "description": playlist.description
+            },
+            "pdv": {
+                "id": pdv.id,
+                "pdv_hdref": pdv.pdv_hdref,
+                "emplacement": pdv.emplacement
+            },
+            "medias": [{
+                "id": media.id,
+                "libelle": media.libelle,
+                "description": media.description
+            } for media in medias],
+            "added_by": pip.pip_add_by,
+            "added_date": pip.pip_add_date
+        })
+    
+    return results
+
+
 
 
 '''
