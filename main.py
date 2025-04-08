@@ -29,6 +29,8 @@ from datetime import datetime, timedelta, date,timezone
 from fastapi.security import OAuth2PasswordBearer
 import smtplib
 from email.mime.text import MIMEText
+from tool_playlist import activate_pl_to_helice, get_list_cible,get_list_media
+
 
 #Mise en place du dossier mediatheque si non existant
 from parametres import VERSION,PATH_MEDIA,MIME_TYPES,PATH_CFG,PYCAV,HELICE_OLD_GEN,HELICE_GEN1,TRUST_WIFI_SSID,TRUST_WIFI_KEY,WIFI_SSID_HD,CFG_OLD,CFG_GEN1
