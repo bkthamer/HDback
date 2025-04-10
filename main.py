@@ -16,7 +16,7 @@ from sqlalchemy import or_,and_,not_,func
 from toolbox import video_tools,video_clean_files,config_file,Maj_Helice
 from apihelice import to_start,to_veille,req_info,init,reload_playlist_sd,obtain_list_media_sd,add_file_sd,delete_file_sd,pushconfig_sd,disable_file_sd,enable_file_sd
 import models
-from models import MIP  # Ensure MIP is imported
+from models import PIP, Playlist, Pdv, Media,MIP
 import re
 import shutil
 import os
@@ -30,7 +30,6 @@ from fastapi.security import OAuth2PasswordBearer
 import smtplib
 from email.mime.text import MIMEText
 from tool_playlist import activate_pl_to_helice, get_list_cible,get_list_media
-
 
 #Mise en place du dossier mediatheque si non existant
 from parametres import VERSION,PATH_MEDIA,MIME_TYPES,PATH_CFG,PYCAV,HELICE_OLD_GEN,HELICE_GEN1,TRUST_WIFI_SSID,TRUST_WIFI_KEY,WIFI_SSID_HD,CFG_OLD,CFG_GEN1
@@ -1409,6 +1408,8 @@ async def get_demande_by_user(request : UserEmail  ,db: db_dependency):
 
 
 
+
+
 class HeureMinute(BaseModel):
     heure: int
     minute: int
@@ -1424,7 +1425,7 @@ class Sch(BaseModel):
 
 
 class Playlist(BaseModel):
-    pl_id: int 
+    pl_id: Optional[int] = None
     pl_libelle : Optional[str] = None
     pl_description : Optional[str] = None
     pl_proprietaire : Optional[int] = None
@@ -1486,7 +1487,6 @@ async def pl_maj_media(newmip:Mip,db:db_dependency):
         return {"etat": "error", "message": "Une erreur s'est produite lors de l'ajout ou suppression du media dans playlist"}
 
 
-
 class Pip(BaseModel):
     list_pdv_id : list
     del_pdv_id : list
@@ -1507,6 +1507,7 @@ async def pl_maj_pdv(newpip:Pip,db:db_dependency):
     except:
         logme.error("pl_maj_pdv: Une erreur lors de l'ajout ou Suppression du pdv"+ str(pdv_id)+" dans playlist "+ str(newpip.pip_playlist_id))
         return {"etat": "error", "message": "Une erreur s'est produite lors de l'ajout ou suppression association pdv dans playlist"}
+
 
 #Methode pour lister les playlists 
 @ipo.get("/playlist/list")
@@ -1556,6 +1557,66 @@ async def pl_add_pdv(newpip:Pip,db:db_dependency):
 
 
 
+#Methode pour lister les pdv affecté à une playlist
+@ipo.get("/playlist/listpdv/{playlist_id}")
+async def list_pdv(playlist_id:int,db:db_dependency):
+    results= db.query(models.Pdv).outerjoin(models.Site,models.Site.id == models.Pdv.site_id).outerjoin(models.Client,models.Client.id == models.Site.client_id).join(models.PIP, models.Pdv.id == models.PIP.pip_pdv_id).filter(models.PIP.pip_playlist_id == playlist_id).values(
+        models.Pdv.id,
+        models.Pdv.pdv_hdref,
+        models.Pdv.emplacement,
+        models.Site.id,
+        models.Site.nomsite,
+        models.Client.id,
+        models.Client.societe   
+    )    
+    resultlist = []
+    for  pdv_id,pdv_hdref,pdv_emplacement,site_id,site_hdref,client_id,client_societe in results:
+        resultlist.append({'pdv_id':pdv_id,
+                           'pdv_hdref':pdv_hdref,
+                           'pdv_emplacement':pdv_emplacement,
+                           'site_id':site_id,
+                           'site_hdref':site_hdref,
+                           'client_id':client_id,
+                           'client_societe':client_societe})
+    return resultlist
+
+
+class HeureMinute(BaseModel):
+    heure: int
+    minute: int
+
+class GrilleBase(BaseModel):
+    playlist_id: int 
+    helice_hdref: str
+    start_date: datetime
+    end_date: datetime
+    media_ids: List[int]
+
+class GrilleCreate(GrilleBase):
+    pass
+
+class Grille(GrilleBase):
+    id: Optional[int] = None
+    
+    class Config:
+        orm_mode = True
+
+
+@ipo.post("/grille/add", response_model=Grille)
+async def add_grille(grille: Grille, db: Session = Depends(get_db)):
+    new_grille = models.Grille(**grille.dict())
+    db.add(new_grille)
+    db.commit()
+    db.refresh(new_grille)
+    return new_grille
+
+
+
+
+
+
+
+
 #Methode pour ajouter une planification à une playlist
 @ipo.post("/playlist/addsch")
 async def pl_add_sch(newsch:Sch,db:db_dependency):
@@ -1582,6 +1643,7 @@ async def pl_list(db:db_dependency):
 @ipo.get("/playlist/mip")
 async def pl_mip(db:db_dependency):
     return db.query(models.MIP).all()
+
 
 @ipo.get("/playlist/on/{playlist_id}")
 async def pl_on(tache_fond:BackgroundTasks,playlist_id:int,db:db_dependency):
@@ -1663,8 +1725,6 @@ def get_pip_details(db: Session = Depends(get_db)):
         })
     
     return results
-
-
 
 
 '''

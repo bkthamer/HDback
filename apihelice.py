@@ -1,6 +1,6 @@
 import socket
 from parametres import PORT_CMD_HELICE,PATH_MEDIA,PATH_CFG
-from ftplib import FTP
+from ftplib import FTP , error_perm
 import os
 from monlogger import logme
 import gzip
@@ -159,11 +159,11 @@ def enable_file_sd(ip, fichier):
         base_name = os.path.basename(fichier)
         
         with FTP(ip) as ftp_helice:
-           
+            # Se placer dans le répertoire de la carte SD
             ftp_helice.cwd('/sd_card')
-
-           
+            
             if base_name.lower() == "dis":
+                # Accéder au dossier "dis"
                 try:
                     ftp_helice.cwd("dis")
                 except Exception as e:
@@ -174,22 +174,38 @@ def enable_file_sd(ip, fichier):
                 except Exception as e:
                     return {"message": f"Erreur lors de la lecture du dossier 'dis': {str(e)}"}
                 finally:
-                    
+                    # Revenir à la racine de la SD
                     ftp_helice.cwd("..")
-
+                
+                # Supprimer les fichiers .mp4 déjà présents dans le répertoire racine de la carte SD
+                try:
+                    root_files = ftp_helice.nlst()
+                    for fname in root_files:
+                        if fname.lower().endswith(".mp4"):
+                            try:
+                                ftp_helice.delete(fname)
+                                print(f"Fichier supprimé: {fname}")
+                            except Exception as e:
+                                print(f"Erreur lors de la suppression de {fname}: {str(e)}")
+                except Exception as e:
+                    print(f"Erreur lors de la lecture de la racine: {str(e)}")
+                
                 moved_files = []
+                # Parcourir les fichiers du dossier "dis" pour effectuer le déplacement
                 for fname in file_list:
                     if fname.lower().endswith(".mp4"):
                         source = f"dis/{fname}"
                         destination = fname
                         try:
-                           
+                            # Vérifier si le fichier existe déjà dans la racine
                             try:
                                 ftp_helice.size(destination)
-                              
+                                # Si le fichier existe, on passe au suivant
                                 continue
                             except Exception:
                                 pass
+                            
+                            # Renommer (déplacer) le fichier de "dis" vers la racine
                             ftp_helice.rename(source, destination)
                             moved_files.append(fname)
                         except Exception as e:
@@ -199,7 +215,6 @@ def enable_file_sd(ip, fichier):
                 return {"message": f"Fichiers restaurés: {', '.join(moved_files)}" if moved_files else "Aucun fichier à restaurer."}
 
             else:
-
                 source = f"dis/{base_name}"
                 destination = base_name
                 try:
