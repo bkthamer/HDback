@@ -20,6 +20,8 @@ from models import PIP, Playlist, Pdv, Media,MIP
 import re
 import shutil
 import os
+import time 
+import asyncio
 import uuid
 import json
 import subprocess
@@ -29,6 +31,8 @@ from datetime import datetime, timedelta, date,timezone
 from fastapi.security import OAuth2PasswordBearer
 import smtplib
 from email.mime.text import MIMEText
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.date import DateTrigger
 from tool_playlist import activate_pl_to_helice, get_list_cible,get_list_media
 
 #Mise en place du dossier mediatheque si non existant
@@ -839,6 +843,131 @@ async def etat_terminal(terminal_hdref: str,db:db_dependency):
     if (os.system("ping -c 1 " +ip)) != 0 : return "red"
     else : return "green"
 
+
+
+
+
+class GrilleBase(BaseModel):
+    playlist_id: int 
+    helice_hdref: str
+    start_date: datetime
+    end_date: datetime
+    media_ids: List[int]
+
+class GrilleCreate(GrilleBase):
+    pass
+
+class Grille(GrilleBase):
+    id: Optional[int] = None
+    class Config:
+        orm_mode = True
+        from_attributes = True
+
+
+scheduler = AsyncIOScheduler()
+
+@ipo.on_event("startup")
+async def startup_event():
+    scheduler.start()
+
+@ipo.on_event("shutdown")
+async def shutdown_event():
+    scheduler.shutdown()
+
+def execute_assignment(grille_id: int):
+    db = SessionLocal()
+    try:
+        grille = db.query(models.Grille).get(grille_id)
+        if not grille:
+            print(f"Grille {grille_id} introuvable")
+            return
+
+        ip = "192.168.1.29"
+        print(f"[Assignment] Début pour la grille {grille.id}")
+
+       
+        files_present = obtain_list_media_sd(ip)
+        print(f"[Assignment] Médias sur la carte SDmmmmmm: {files_present}")
+
+        
+        mp4_files = [f for f in files_present if f.lower().endswith(".mp4")]
+        for file in mp4_files:
+            result_disable = disable_file_sd(ip, file)
+            print(f"[Assignment] Désactivation du média {file}: {result_disable}")        
+        medias = db.query(models.Media).filter(models.Media.id.in_(grille.media_ids)).all()
+        
+        for media in medias:
+            print(f"[Assignment] Ajout du média {media.libelle}")
+            add_file_sd(ip, media.libelle)  
+        
+        reload_playlist_sd(ip)
+
+
+
+
+
+    except Exception as e:
+        print(f"[Assignment] Erreur lors de l'assignation: {str(e)}")
+    finally:
+        db.close()
+
+
+def execute_restoration(grille_id: int):
+    db = SessionLocal()
+    try:
+        grille = db.query(models.Grille).get(grille_id)
+        if not grille:
+            print(f"Grille {grille_id} introuvable")
+            return
+
+        ip = "192.168.1.29"
+        print(f"[Restoration] Début pour la grille {grille.id}")
+        result_enable = enable_file_sd(ip, "dis")
+        print(f"[Restoration] Restauration: {result_enable}")
+        
+        reload_playlist_sd(ip)
+        print(f"[Restoration] Restauration terminée pour la grille {grille.id}")
+
+    except Exception as e:
+        print(f"[Restoration] Erreur lors de la restauration: {str(e)}")
+    finally:
+        db.close()
+
+
+async def schedule_task(task_func, delay: float, grille: Grille):
+    try:
+        print(f"[Schedule] Pour la grille {grille.id}, attente de {delay} secondes avant exécution de {task_func.__name__}")
+        await asyncio.sleep(delay)
+        print(f"[Schedule] Exécution de {task_func.__name__} pour la grille {grille.id}")
+        await asyncio.to_thread(task_func, grille)
+    except Exception as e:
+        print(f"[Schedule] Erreur dans schedule_task pour la grille {grille.id} : {e}")
+
+@ipo.post("/grille/add", response_model=Grille)
+async def add_grille(grille: GrilleCreate, db: Session = Depends(get_db)):
+    new_grille = models.Grille(**grille.dict())
+    db.add(new_grille)
+    db.commit()
+    db.refresh(new_grille)
+    now = datetime.utcnow() 
+    if new_grille.start_date > now:
+        scheduler.add_job(
+            execute_assignment,
+            trigger=DateTrigger(new_grille.start_date),
+            args=[new_grille.id]
+        )
+    else:
+        await execute_assignment(new_grille.id)
+    if new_grille.end_date > now:
+        scheduler.add_job(
+            execute_restoration,
+            trigger=DateTrigger(new_grille.end_date),
+            args=[new_grille.id]
+        )
+    else:
+        await execute_restoration(new_grille.id)
+    return Grille.from_orm(new_grille)
+
 class RemoteHelice(BaseModel):
     hdref:str
     ordre: str #start,veille,reload,info,listsd,addmedia,delmedia
@@ -1294,10 +1423,10 @@ async def creer_demande(
     email: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    # Dossier où stocker les images (chemin absolu)
+   
     IMAGES_FOLDER = r"C:\Users\Cybertek.tn\Desktop\PFE\HDback-main\images"
     
-    # S'assurer que le dossier existe
+    
     if not os.path.exists(IMAGES_FOLDER):
         os.makedirs(IMAGES_FOLDER)
     
@@ -1315,7 +1444,7 @@ async def creer_demande(
     new_demande = models.Demande(
         sujet=sujet,
         description=description,
-        image=file_location,  # Enregistre le chemin absolu de l'image
+        image=file_location,  
         email=email
     )
     
@@ -1581,34 +1710,14 @@ async def list_pdv(playlist_id:int,db:db_dependency):
     return resultlist
 
 
-class HeureMinute(BaseModel):
-    heure: int
-    minute: int
-
-class GrilleBase(BaseModel):
-    playlist_id: int 
-    helice_hdref: str
-    start_date: datetime
-    end_date: datetime
-    media_ids: List[int]
-
-class GrilleCreate(GrilleBase):
-    pass
-
-class Grille(GrilleBase):
-    id: Optional[int] = None
-    
-    class Config:
-        orm_mode = True
 
 
-@ipo.post("/grille/add", response_model=Grille)
-async def add_grille(grille: Grille, db: Session = Depends(get_db)):
-    new_grille = models.Grille(**grille.dict())
-    db.add(new_grille)
-    db.commit()
-    db.refresh(new_grille)
-    return new_grille
+
+
+
+
+
+
 
 
 
@@ -1727,195 +1836,7 @@ def get_pip_details(db: Session = Depends(get_db)):
     return results
 
 
-'''
-
-class PlaylistResponse(BaseModel):
-    id: int
-    libelle: str
-    description: str
-    proprietaire: int
-    status: bool
-
-    class Config:
-        orm_mode = True
-
-class MediaResponse(BaseModel):
-    id: int
-    libelle: str
-    description: str
-    ready: bool
-    categorie_id: int
-    souscategorie_id: int
-    owner_id: Optional[int] = None  
-
-    class Config:
-        orm_mode = True
-
-class MIPResponse(BaseModel):
-    mip_add_by: Optional[str] = None  
-    mip_add_date: datetime
-    media: MediaResponse
-    playlist: PlaylistResponse
-
-    class Config:
-        orm_mode = True
-
-
-@ipo.get("/mip", response_model=List[MIPResponse])
-def get_mip_entries(db: Session = Depends(get_db)):
-    return db.query(MIP)\
-        .join(MIP.media)\
-        .join(MIP.playlist)\
-        .options(
-            contains_eager(MIP.media),
-            contains_eager(MIP.playlist)
-        )\
-        .all()
-    
-    return mip_entries
-
-
-
-  
-
-
-
-class HeureMinute(BaseModel):
-    heure: int
-    minute: int
-
-class GrilleBase(BaseModel):
-    playlist_id: int
-    helice_hdref: str
-    start_date: datetime
-    end_date: datetime
-    media_ids: List[int]
-
-class GrilleCreate(GrilleBase):
-    pass
-
-class Grille(GrilleBase):
-    id: int
-    
-    class Config:
-        orm_mode = True
 
 
 
 
-@ipo.post("/grille/add", response_model=Grille)
-async def add_grille(grille: Grille, db: Session = Depends(get_db)):
-    new_grille = models.Grille(**grille.dict())
-    db.add(new_grille)
-    db.commit()
-    db.refresh(new_grille)
-    return new_grille
-
-
-async def delete_scheduled_media(hdref: str, media_ids: List[int], db: Session):
-    try:
-        medias = db.query(models.Media).filter(models.Media.id.in_(media_ids)).all()
-        filenames = [media.libelle + ".Z3.mp4" for media in medias]
-
-        for filename in filenames:
-            await remote(models.RemoteHelice(
-                hdref=hdref,
-                ordre="delmedia",
-                fichier=filename
-            ), db)
-
-        db.query(models.Grille).filter(
-            models.Grille.helice_hdref == hdref,
-            models.Grille.end_date <= datetime.now(timezone.utc)
-        ).delete()
-        db.commit()
-
-    except Exception as e:
-        print(f"Erreur suppression automatique: {str(e)}")
-
-
-
-
-
-async def add_scheduled_media(hdref: str, media_ids: list[int], db: Session):
-    try:
-        medias = db.query(models.Media).filter(models.Media.id.in_(media_ids)).all()
-        if not medias:
-            raise Exception("Aucun média trouvé")
-            
-    
-        existing_files = await remote(models.RemoteHelice(
-            hdref=hdref,
-            ordre="listsd"
-        ), db)
-        
-        for file in existing_files:
-            await remote(models.RemoteHelice(
-                hdref=hdref,
-                ordre="delmedia",
-                fichier=file
-            ), db)
-
-        
-        for media in medias:
-            await remote(models.RemoteHelice(
-                hdref=hdref,
-                ordre="addmedia",
-                libelle=media.libelle
-            ), db)
-
-    except Exception as e:
-        print(f"Erreur d'ajout programmé: {str(e)}")
-        raise
-
-@ipo.post("/programmer-playlist", response_model=Grille)
-async def programmer_playlist(
-    grille: GrilleCreate,
-    db: Session = Depends(get_db)
-):
-    now_utc = datetime.now(timezone.utc)
-    
-    
-    start_date_utc = grille.start_date.astimezone(timezone.utc)
-    end_date_utc = grille.end_date.astimezone(timezone.utc)
-
-    
-    if start_date_utc >= end_date_utc:
-        raise HTTPException(400, "La date de fin doit être ultérieure à la date de début")
-    
-    min_start_date = now_utc + timedelta(seconds=10)
-    if start_date_utc <= min_start_date:
-        raise HTTPException(400, f"La date de début doit être au moins 10 secondes dans le futur (actuellement: {now_utc})")
-
-    
-    medias = db.query(models.Media).filter(models.Media.id.in_(grille.media_ids)).all()
-    if len(medias) != len(grille.media_ids):
-        raise HTTPException(404, "Un ou plusieurs médias introuvables")
-
-    
-    db_grille = models.Grille(**grille.dict())
-    db.add(db_grille)
-    
-    try:
-        db.commit()
-        db.refresh(db_grille)
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(500, f"Erreur base de données: {str(e)}")
-
-    
-    scheduler.add_job(
-        add_scheduled_media,
-        'date',
-        run_date=start_date_utc,
-        args=[grille.helice_hdref, grille.media_ids, db]
-    )
-
-    scheduler.add_job(
-        lambda: delete_scheduled_media(grille.helice_hdref, grille.media_ids, db),
-        'date',
-        run_date=end_date_utc
-    )
-
-    return db_grille
-'''    
